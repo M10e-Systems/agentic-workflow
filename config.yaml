@@ -1,0 +1,14 @@
+name: Agentic Workflow Configuration
+version: 0.1.0
+schema: v1
+models:
+  - uses: ./models/openai.yaml
+  - uses: ./models/anthropic.yaml
+  - uses: ./models/gemini.yaml
+rules:
+  - uses: ./rules/POLICY.md
+  - uses: ./rules/WORKFLOW.md
+  - uses: ./rules/CONTRACTS.md
+  - uses: ./rules/TESTING.md
+mcpServers:
+  - uses: ./mcpServers/serena.yaml

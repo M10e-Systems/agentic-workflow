@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+
+
+def load_json(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def load_view(view_name):
+    if view_name == "md":
+        from views import md
+        return md.render
+    raise ValueError(f"Unknown view: {view_name}")
+
+
+def main(argv):
+    if len(argv) != 3:
+        print("Usage: render <view> <path>", file=sys.stderr)
+        return 2
+
+    view_name = argv[1]
+    json_path = argv[2]
+
+    if not os.path.exists(json_path):
+        print(f"Missing file: {json_path}", file=sys.stderr)
+        return 2
+
+    try:
+        data = load_json(json_path)
+    except json.JSONDecodeError as exc:
+        print(f"State JSON parse error: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        render_fn = load_view(view_name)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    output = render_fn(data)
+    output_dir = os.path.dirname(os.path.abspath(json_path))
+    output_path = os.path.join(output_dir, f"workflow_state.{view_name}")
+
+    with open(output_path, "w", encoding="utf-8") as handle:
+        handle.write(output)
+
+    print(output_path)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

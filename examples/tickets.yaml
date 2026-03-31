@@ -1,0 +1,28 @@
+tickets:
+  - id: TICKET-101
+    summary: "Introduce new interface X"
+    priority: Highest
+    status: Ready
+    blocked_by: []
+    code_root: repo-a
+    unit_test_commands:
+      - "ctest -V"
+    jira:
+      key: PROJ-101
+      url: https://jira.example.com/browse/PROJ-101
+  - id: TICKET-102
+    summary: "Consume interface X in feature Y"
+    priority: Medium
+    status: Draft
+    blocked_by: [TICKET-101]
+    code_root: repo-a
+    unit_test_commands:
+      - "pytest -q"
+  - id: TICKET-103
+    summary: "Add a small TypeScript CLI wrapper"
+    priority: Low
+    status: Draft
+    blocked_by: []
+    code_root: repo-a
+    unit_test_commands:
+      - "npm test"

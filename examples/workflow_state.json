@@ -1,0 +1,101 @@
+{
+  "workflow": {
+    "name": "agentic-dev",
+    "version": "0.1.0"
+  },
+  "run": {
+    "run_id": "example-2025-01-15-001",
+    "status": "blocked",
+    "created_at": "2025-01-15T10:00:00Z",
+    "updated_at": "2025-01-15T10:30:00Z"
+  },
+  "current": {
+    "phase": "stage-2",
+    "stage": "ticket-drafting",
+    "step": "draft tickets",
+    "objective": "Produce tickets.yaml from approved requirements"
+  },
+  "progress": {
+    "completed_steps": [
+      "stage-1.requirements-approved"
+    ],
+    "next_steps": [
+      {
+        "id": "resolve-oq-1",
+        "agent": "human",
+        "inputs_required": [
+          "artifacts/requirements/requirements.md"
+        ],
+        "outputs_expected": [
+          "artifacts/workflow_state.json"
+        ]
+      }
+    ]
+  },
+  "artifacts": {
+    "authoritative": [
+      {
+        "id": "requirements-001",
+        "type": "requirements",
+        "path": "artifacts/requirements/requirements.md",
+        "status": "accepted",
+        "hash": "sha256:2d70b0f8cbd1bb8d8e3d3e4c01d2a2c5c9cc3f4a2f5d3c4a1b2c3d4e5f678901",
+        "produced_by": "spec-writer",
+        "accepted_by": "Project Sponsor <sponsor@example.com>",
+        "accepted_at": "2025-01-15T10:20:00Z"
+      }
+    ],
+    "provisional": [
+      {
+        "id": "tickets-draft-001",
+        "type": "tickets",
+        "path": "artifacts/tickets/tickets.yaml",
+        "status": "draft",
+        "produced_by": "ticket-writer"
+      }
+    ]
+  },
+  "inputs": {
+    "locked": [
+      {
+        "name": "PROJECT_ROOT",
+        "value": "/home/user/example-project",
+        "source": "human"
+      }
+    ],
+    "open_questions": [
+      {
+        "id": "oq-1",
+        "question": "Confirm target OS/kernel constraints for this change.",
+        "owner": "Project Sponsor <sponsor@example.com>",
+        "blocking": true
+      }
+    ]
+  },
+  "quality": {
+    "checks": [
+      {
+        "id": "requirements-review",
+        "status": "pass",
+        "notes": "Requirements accepted by human sponsor."
+      },
+      {
+        "id": "ticket-draft-ready",
+        "status": "warn",
+        "notes": "Ticket drafting paused due to missing target constraints."
+      }
+    ],
+    "risks": [
+      {
+        "id": "risk-1",
+        "risk": "Target constraints unknown; ticket scope may be invalid.",
+        "mitigation": "Resolve oq-1 before drafting tickets."
+      }
+    ]
+  },
+  "provenance": {
+    "last_actor": "ticket-writer",
+    "last_action": "updated workflow_state.json with blocker",
+    "notes_for_humans": "Awaiting target OS/kernel constraints to proceed."
+  }
+}

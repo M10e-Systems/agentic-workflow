@@ -1,0 +1,8 @@
+name: Agentic Development Anthropic Model Config
+version: 0.1.0
+schema: v1
+models:
+- name: Claude Opus 4.5
+  provider: anthropic
+  model: claude-4-5-opus
+  apiKey: ${{ secrets.ANTHROPIC_API_KEY }}

@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import subprocess
+import sys
+from fnmatch import fnmatch
+from typing import Any, Dict, List, Optional, Tuple
+
+
+def load_json(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def write_json(path: str, data: Dict[str, Any]) -> None:
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, sort_keys=False)
+        handle.write("\n")
+    os.replace(tmp_path, path)
+
+
+def infer_project_root(state_path: str) -> str:
+    state_dir = os.path.dirname(os.path.abspath(state_path))
+    # Expected canonical location: <PROJECT_ROOT>/artifacts/workflow_state.json
+    return os.path.abspath(os.path.join(state_dir, ".."))
+
+def get_project_root(state: Dict[str, Any], state_path: str) -> str:
+    workspace = state.get("workspace", {})
+    if isinstance(workspace, dict):
+        project_root = workspace.get("project_root")
+        if isinstance(project_root, str) and project_root and os.path.isabs(project_root):
+            return project_root
+    return infer_project_root(state_path)
+
+
+def run_git(repo_path: str, args: List[str]) -> str:
+    cmd = ["git", "-C", repo_path] + args
+    out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+    return out.decode("utf-8", errors="replace").strip()
+
+
+def get_git_branch_and_commit(repo_path: str) -> Tuple[str, str]:
+    branch = run_git(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+    commit = run_git(repo_path, ["rev-parse", "HEAD"])
+    return branch, commit
+
+
+def parse_git_status_porcelain_z(output: bytes) -> List[str]:
+    entries = output.split(b"\x00")
+    paths: List[str] = []
+    for raw in entries:
+        if not raw:
+            continue
+        line = raw.decode("utf-8", errors="replace")
+        if len(line) < 4:
+            continue
+        status = line[:2]
+        payload = line[3:]
+
+        if status in ("R ", "RM", "R?", "RC", "RD", "RR", "C ", "CM", "C?", "CC", "CD", "CR"):
+            if " -> " in payload:
+                _, new_path = payload.split(" -> ", 1)
+                paths.append(new_path)
+            else:
+                paths.append(payload)
+            continue
+
+        paths.append(payload)
+
+    # stable order, de-dupe
+    seen = set()
+    deduped: List[str] = []
+    for p in paths:
+        if p in seen:
+            continue
+        seen.add(p)
+        deduped.append(p)
+    return deduped
+
+
+def get_dirty_paths(repo_path: str) -> List[str]:
+    cmd = ["git", "-C", repo_path, "status", "--porcelain=v1", "-z"]
+    out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+    return sorted(parse_git_status_porcelain_z(out))
+
+
+def is_path_allowed(path: str, allowed_patterns: List[str]) -> bool:
+    norm = path.replace("\\", "/")
+    for pattern in allowed_patterns:
+        pat = str(pattern).replace("\\", "/").strip()
+        if not pat:
+            continue
+
+        if pat.endswith("/"):
+            if norm.startswith(pat):
+                return True
+            continue
+
+        if any(ch in pat for ch in "*?[]"):
+            if fnmatch(norm, pat):
+                return True
+            continue
+
+        # Exact file match, or prefix match for directories specified without trailing slash.
+        if norm == pat or norm.startswith(pat + "/"):
+            return True
+
+    return False
+
+
+def resolve_repo_path(project_root: str, workspace: Dict[str, Any], entry: Dict[str, Any]) -> str:
+    entry_path = entry.get("path", "")
+    if isinstance(entry_path, str) and entry_path:
+        if os.path.isabs(entry_path):
+            return entry_path
+        code_root = entry.get("code_root", "")
+        if isinstance(code_root, str) and code_root:
+            code_roots = workspace.get("code_roots", {})
+            if isinstance(code_roots, dict):
+                mapped = code_roots.get(code_root)
+                if isinstance(mapped, str) and mapped:
+                    return mapped if os.path.isabs(mapped) else os.path.join(project_root, mapped)
+        return os.path.join(project_root, entry_path)
+
+    code_root = entry.get("code_root", "")
+    if isinstance(code_root, str) and code_root:
+        code_roots = workspace.get("code_roots", {})
+        if isinstance(code_roots, dict):
+            mapped = code_roots.get(code_root)
+            if isinstance(mapped, str) and mapped:
+                return mapped if os.path.isabs(mapped) else os.path.join(project_root, mapped)
+
+    raise ValueError("repo_state.expected entry must include either 'path' or a resolvable 'code_root'")
+
+
+def check_entry(repo_path: str, entry: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    problems: List[str] = []
+
+    observed_branch, observed_commit = get_git_branch_and_commit(repo_path)
+    dirty_paths = get_dirty_paths(repo_path)
+
+    expected_branch = entry.get("branch")
+    expected_commit = entry.get("commit")
+    allowed = entry.get("dirty_allowed_paths", [])
+    allowed_patterns = allowed if isinstance(allowed, list) else []
+
+    if isinstance(expected_branch, str) and expected_branch and observed_branch != expected_branch:
+        problems.append(f"branch mismatch: expected {expected_branch!r}, observed {observed_branch!r}")
+
+    if isinstance(expected_commit, str) and expected_commit and observed_commit != expected_commit:
+        problems.append(f"commit mismatch: expected {expected_commit!r}, observed {observed_commit!r}")
+
+    if dirty_paths:
+        if not allowed_patterns:
+            problems.append(f"dirty working tree (no allowlist): {', '.join(dirty_paths[:10])}")
+        else:
+            disallowed = [p for p in dirty_paths if not is_path_allowed(p, allowed_patterns)]
+            if disallowed:
+                problems.append(
+                    "dirty paths outside allowlist: "
+                    + ", ".join(disallowed[:10])
+                    + (" (truncated)" if len(disallowed) > 10 else "")
+                )
+
+    observed = {
+        "code_root": entry.get("code_root", ""),
+        "path": entry.get("path", ""),
+        "branch": observed_branch,
+        "commit": observed_commit,
+        "dirty_paths": dirty_paths,
+        "notes": "",
+    }
+    return observed, problems
+
+
+def main(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(description="Check repo_state.expected against git worktrees.")
+    parser.add_argument("state_path", nargs="?", default="artifacts/workflow_state.json", help="Path to workflow_state.json")
+    parser.add_argument(
+        "--write-observed",
+        action="store_true",
+        help="Write repo_state.observed[] back into workflow_state.json",
+    )
+    args = parser.parse_args(argv[1:])
+
+    if not os.path.exists(args.state_path):
+        print(f"Missing file: {args.state_path}", file=sys.stderr)
+        return 2
+
+    state = load_json(args.state_path)
+    workspace = state.get("workspace", {})
+    repo_state = state.get("repo_state", {})
+    expected = repo_state.get("expected", [])
+
+    if not isinstance(expected, list) or not expected:
+        print("No repo_state.expected entries; nothing to check.", file=sys.stderr)
+        return 2
+
+    project_root = get_project_root(state, args.state_path)
+
+    observed_entries: List[Dict[str, Any]] = []
+    failures: List[Tuple[str, List[str]]] = []
+
+    for i, entry in enumerate(expected):
+        if not isinstance(entry, dict):
+            failures.append((f"expected[{i}]", ["invalid entry type (expected object)"]))
+            continue
+        try:
+            repo_path = resolve_repo_path(project_root, workspace if isinstance(workspace, dict) else {}, entry)
+            obs, problems = check_entry(repo_path, entry)
+            observed_entries.append(obs)
+            if problems:
+                label = entry.get("code_root") or entry.get("path") or f"expected[{i}]"
+                failures.append((str(label), problems))
+        except Exception as exc:
+            label = entry.get("code_root") or entry.get("path") or f"expected[{i}]"
+            failures.append((str(label), [str(exc)]))
+
+    if args.write_observed:
+        state.setdefault("repo_state", {}).setdefault("observed", [])
+        state["repo_state"]["observed"] = observed_entries
+        write_json(args.state_path, state)
+
+    if failures:
+        for label, problems in failures:
+            for problem in problems:
+                print(f"{label}: {problem}", file=sys.stderr)
+        return 1
+
+    print("OK")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

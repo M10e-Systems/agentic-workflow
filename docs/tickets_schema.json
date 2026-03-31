@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tickets (artifacts/tickets/tickets.yaml)",
+  "type": "object",
+  "required": ["tickets"],
+  "properties": {
+    "tickets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "summary", "priority", "status", "blocked_by"],
+        "properties": {
+          "id": { "type": "string" },
+          "summary": { "type": "string" },
+          "priority": {
+            "type": "string",
+            "enum": ["Highest", "High", "Medium", "Low", "Lowest"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["Draft", "Ready", "In Progress", "Done", "Accepted"]
+          },
+          "blocked_by": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "code_root": { "type": "string" },
+          "unit_test_commands": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "claimed_by": { "type": "string" },
+          "claimed_at": { "type": "string" },
+          "jira": {
+            "type": "object",
+            "required": [],
+            "properties": {
+              "key": { "type": "string" },
+              "url": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

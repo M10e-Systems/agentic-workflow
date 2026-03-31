@@ -1,0 +1,749 @@
+#!/usr/bin/env python3
+import datetime as _dt
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from typing import Any, Dict, List, Optional, Tuple
+
+
+def _now_utc_iso() -> str:
+    return _dt.datetime.now(tz=_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _prompt(text: str, default: Optional[str] = None) -> str:
+    if default is None:
+        suffix = ""
+    else:
+        suffix = f" [{default}]"
+    value = input(f"{text}{suffix}: ").strip()
+    return value if value else (default or "")
+
+
+def _prompt_yes_no(text: str, default: bool = True) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    while True:
+        raw = input(f"{text} [{suffix}]: ").strip().lower()
+        if raw == "":
+            return default
+        if raw in ("y", "yes"):
+            return True
+        if raw in ("n", "no"):
+            return False
+        print("Please enter 'y' or 'n'.", file=sys.stderr)
+
+
+def _get_git_identity() -> str:
+    def _run(args: List[str]) -> str:
+        try:
+            out = subprocess.check_output(args, stderr=subprocess.DEVNULL).decode("utf-8", errors="replace").strip()
+        except Exception:
+            return ""
+        return out
+
+    name = _run(["git", "config", "--global", "user.name"]) or _run(["git", "config", "--system", "user.name"])
+    email = _run(["git", "config", "--global", "user.email"]) or _run(["git", "config", "--system", "user.email"])
+    if name and email:
+        return f"{name} <{email}>"
+    return _run(["whoami"]) or "unknown"
+
+
+def _load_json(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _write_json(path: str, data: Dict[str, Any]) -> None:
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, sort_keys=False)
+        handle.write("\n")
+    os.replace(tmp_path, path)
+
+
+def _infer_project_root(state_path: str) -> str:
+    # Expected: <PROJECT_ROOT>/artifacts/workflow_state.json
+    state_dir = os.path.dirname(os.path.abspath(state_path))
+    return os.path.abspath(os.path.join(state_dir, ".."))
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return f"sha256:{digest.hexdigest()}"
+
+
+def _format_artifact_line(index: int, artifact: Dict[str, Any]) -> str:
+    artifact_id = artifact.get("id", "unknown")
+    artifact_type = artifact.get("type", "unknown")
+    artifact_path = artifact.get("path", "unknown")
+    status = artifact.get("status", "unknown")
+    produced_by = artifact.get("produced_by", "unknown")
+    accepted_by = artifact.get("accepted_by")
+    accepted_at = artifact.get("accepted_at")
+    accepted = (
+        isinstance(accepted_by, str)
+        and accepted_by.strip() != ""
+        and isinstance(accepted_at, str)
+        and accepted_at.strip() != ""
+    )
+    acceptance_part = "accepted" if accepted else "unaccepted"
+    return (
+        f"{index:>2}) {artifact_id} ({artifact_type}) status={status} path={artifact_path} "
+        f"produced_by={produced_by} {acceptance_part}"
+    )
+
+
+def _select_artifacts(
+    candidates: List[Dict[str, Any]],
+    default_ids: List[str],
+    *,
+    heading: str,
+) -> List[Dict[str, Any]]:
+    if not candidates:
+        return []
+
+    print(heading)
+    for i, artifact in enumerate(candidates, start=1):
+        print(_format_artifact_line(i, artifact))
+
+    default_index = None
+    if default_ids:
+        by_id = {a.get("id"): idx for idx, a in enumerate(candidates, start=1)}
+        for artifact_id in default_ids:
+            if artifact_id in by_id:
+                default_index = by_id[artifact_id]
+                break
+    if default_index is None and len(candidates) == 1:
+        default_index = 1
+
+    raw = _prompt(
+        "Select artifact(s) to approve (comma-separated indices)",
+        default=str(default_index) if default_index is not None else "",
+    )
+    if not raw.strip():
+        return []
+
+    selections: List[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            index = int(part)
+        except ValueError as exc:
+            raise ValueError(f"Invalid selection: {part!r}") from exc
+        if index < 1 or index > len(candidates):
+            raise ValueError(f"Selection out of range: {index}")
+        selections.append(index)
+
+    # preserve order, de-dup
+    seen = set()
+    chosen: List[Dict[str, Any]] = []
+    for index in selections:
+        if index in seen:
+            continue
+        seen.add(index)
+        chosen.append(candidates[index - 1])
+    return chosen
+
+
+def _default_gate_artifact_ids(state: Dict[str, Any]) -> List[str]:
+    progress = state.get("progress", {})
+    next_steps = progress.get("next_steps", [])
+    if not next_steps:
+        return []
+    next_step = next_steps[0]
+    if next_step.get("type") != "human":
+        return []
+
+    inputs_required = next_step.get("inputs_required", [])
+    if not isinstance(inputs_required, list):
+        return []
+
+    required_paths = {p for p in inputs_required if isinstance(p, str)}
+    if not required_paths:
+        return []
+
+    candidates = []
+    artifacts = state.get("artifacts", {})
+    for artifact in artifacts.get("provisional", []):
+        path = artifact.get("path")
+        if isinstance(path, str) and path in required_paths:
+            candidates.append(artifact.get("id"))
+    for artifact in artifacts.get("authoritative", []):
+        # Allow default selection when a gate references an artifact that was mistakenly
+        # placed under authoritative without acceptance metadata.
+        if not isinstance(artifact, dict):
+            continue
+        accepted_by = artifact.get("accepted_by")
+        accepted_at = artifact.get("accepted_at")
+        if isinstance(accepted_by, str) and accepted_by.strip() and isinstance(accepted_at, str) and accepted_at.strip():
+            continue
+        path = artifact.get("path")
+        if isinstance(path, str) and path in required_paths:
+            candidates.append(artifact.get("id"))
+    return [c for c in candidates if isinstance(c, str)]
+
+
+def _normalize_gate_step_id(gate_step_id: str) -> str:
+    # Historically some runs used '.' separators (e.g. "stage-1.requirements-approval").
+    # Treat that as an alias for the canonical '-' form.
+    raw = gate_step_id.strip()
+    if not raw:
+        return ""
+
+    normalized = raw.replace(".", "-").replace("_", "-").strip()
+    while "--" in normalized:
+        normalized = normalized.replace("--", "-")
+
+    # Legacy aliases.
+    aliases = {
+        # Older prompts used plural "tickets" for the Stage 2 approval gate.
+        "stage-2-tickets-approval": "stage-2-ticket-approval",
+        "stage-2-tickets-approve": "stage-2-ticket-approval",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _infer_gate_step_id_from_approved_artifacts(approved: List[Dict[str, Any]]) -> str:
+    # Fallback when the state does not currently encode a human gate in progress.next_steps[0].
+    for artifact in approved:
+        artifact_type = artifact.get("type")
+        artifact_path = artifact.get("path")
+        if artifact_type == "requirements" or artifact_path == "artifacts/requirements/requirements.md":
+            return "stage-1-requirements-approval"
+        if artifact_type == "tickets" or artifact_path == "artifacts/tickets/tickets.yaml":
+            return "stage-2-ticket-approval"
+    return ""
+
+
+def _is_resolved_question(question: Dict[str, Any]) -> bool:
+    if question.get("status") == "resolved":
+        return True
+    answer = question.get("answer")
+    if isinstance(answer, dict) and answer.get("status") == "resolved":
+        return True
+    return False
+
+
+def _normalize_open_questions(state: Dict[str, Any], default_owner: str) -> Tuple[bool, List[str]]:
+    """
+    Best-effort repair for older workflow_state.json variants that don't satisfy the
+    current schema (docs/workflow_state_schema.json). This tool is human-invoked and
+    is allowed to make schema-preserving edits so post-check validation can run.
+    """
+    inputs = state.setdefault("inputs", {})
+    questions = inputs.setdefault("open_questions", [])
+    if not isinstance(questions, list):
+        inputs["open_questions"] = []
+        return True, ["inputs.open_questions: reset non-array to []"]
+
+    changed = False
+    notes: List[str] = []
+    for i, question in enumerate(questions):
+        if not isinstance(question, dict):
+            continue
+
+        if not question.get("id"):
+            question["id"] = f"question-{i+1}"
+            changed = True
+            notes.append(f"inputs.open_questions[{i}].id: set default")
+
+        if not question.get("question"):
+            title = question.get("title")
+            if isinstance(title, str) and title.strip():
+                question["question"] = title.strip()
+                changed = True
+                notes.append(f"inputs.open_questions[{i}].question: filled from title")
+
+        if not question.get("owner"):
+            question["owner"] = default_owner
+            changed = True
+            notes.append(f"inputs.open_questions[{i}].owner: set default")
+
+        if "blocking" not in question or not isinstance(question.get("blocking"), bool):
+            question["blocking"] = not _is_resolved_question(question)
+            changed = True
+            notes.append(f"inputs.open_questions[{i}].blocking: set default")
+
+        if "status" not in question or not isinstance(question.get("status"), str):
+            question["status"] = "resolved" if _is_resolved_question(question) else "open"
+            changed = True
+            notes.append(f"inputs.open_questions[{i}].status: set default")
+
+    return changed, notes
+
+
+def _resolve_questions_for_approved_artifacts(
+    state: Dict[str, Any],
+    approved: List[Dict[str, Any]],
+    answered_by: str,
+    answered_at: str,
+) -> Tuple[bool, List[str]]:
+    inputs = state.get("inputs", {})
+    questions = inputs.get("open_questions", [])
+    if not isinstance(questions, list):
+        return False, []
+
+    approved_paths = []
+    for artifact in approved:
+        path = artifact.get("path")
+        if isinstance(path, str) and path and path != "artifacts/workflow_state.json":
+            approved_paths.append(path)
+    if not approved_paths:
+        return False, []
+
+    changed = False
+    notes: List[str] = []
+    for i, question in enumerate(questions):
+        if not isinstance(question, dict):
+            continue
+
+        haystack = " ".join(
+            [
+                str(question.get("id", "")),
+                str(question.get("title", "")),
+                str(question.get("question", "")),
+                str(question.get("instructions", "")),
+            ]
+        )
+        if not any(p in haystack for p in approved_paths):
+            continue
+
+        if _is_resolved_question(question):
+            # Still ensure blocking isn't left true after resolution.
+            if question.get("blocking") is True:
+                question["blocking"] = False
+                changed = True
+                notes.append(f"inputs.open_questions[{i}].blocking: cleared for resolved question")
+            continue
+
+        question["status"] = "resolved"
+        question["blocking"] = False
+        answer = question.get("answer")
+        if not isinstance(answer, dict):
+            answer = {}
+            question["answer"] = answer
+        answer["status"] = "resolved"
+        if answer.get("value") in (None, ""):
+            answer["value"] = "Yes"
+        answer["answered_by"] = answered_by
+        answer["answered_at"] = answered_at
+        changed = True
+        notes.append(f"inputs.open_questions[{i}]: resolved due to artifact approval")
+
+    return changed, notes
+
+
+def _resolve_approval_questions_for_accepted_artifacts(
+    state: Dict[str, Any],
+    fallback_answered_by: str,
+) -> Tuple[bool, List[str]]:
+    """
+    If an approval-style open question still exists for an artifact that is already
+    authoritative (accepted_by/accepted_at present), treat it as stale and resolve it.
+    """
+    artifacts = state.get("artifacts", {})
+    authoritative = artifacts.get("authoritative", [])
+    if not isinstance(authoritative, list):
+        return False, []
+
+    accepted = []
+    for artifact in authoritative:
+        if not isinstance(artifact, dict):
+            continue
+        path = artifact.get("path")
+        if not isinstance(path, str) or not path or path == "artifacts/workflow_state.json":
+            continue
+        if artifact.get("accepted_by") and artifact.get("accepted_at"):
+            accepted.append(artifact)
+    if not accepted:
+        return False, []
+
+    inputs = state.get("inputs", {})
+    questions = inputs.get("open_questions", [])
+    if not isinstance(questions, list):
+        return False, []
+
+    changed = False
+    notes: List[str] = []
+    for i, question in enumerate(questions):
+        if not isinstance(question, dict) or _is_resolved_question(question):
+            continue
+
+        qid = str(question.get("id", "")).lower()
+        title = str(question.get("title", "")).lower()
+        qtext = str(question.get("question", "")).lower()
+        looks_like_approval = qid.startswith("approval") or ("approve" in title) or ("approve" in qtext)
+        if not looks_like_approval:
+            continue
+
+        haystack = " ".join(
+            [
+                str(question.get("id", "")),
+                str(question.get("title", "")),
+                str(question.get("question", "")),
+                str(question.get("instructions", "")),
+            ]
+        )
+
+        matched = None
+        for artifact in accepted:
+            path = artifact.get("path")
+            if isinstance(path, str) and path and path in haystack:
+                matched = artifact
+                break
+        if matched is None:
+            continue
+
+        question["status"] = "resolved"
+        question["blocking"] = False
+        answer = question.get("answer")
+        if not isinstance(answer, dict):
+            answer = {}
+            question["answer"] = answer
+        answer["status"] = "resolved"
+        if answer.get("value") in (None, ""):
+            answer["value"] = "Yes"
+        answer["answered_by"] = str(matched.get("accepted_by") or fallback_answered_by)
+        answer["answered_at"] = str(matched.get("accepted_at") or _now_utc_iso())
+        changed = True
+        notes.append(f"inputs.open_questions[{i}]: resolved (artifact already accepted: {matched.get('path')})")
+
+    return changed, notes
+
+
+def _has_blockers(state: Dict[str, Any]) -> bool:
+    questions = state.get("inputs", {}).get("open_questions", [])
+    if not isinstance(questions, list):
+        return False
+    for question in questions:
+        if not isinstance(question, dict):
+            continue
+        if question.get("blocking") is True and not _is_resolved_question(question):
+            return True
+    return False
+
+
+def _get_stale_authoritative_artifacts(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    artifacts = state.get("artifacts", {})
+    authoritative = artifacts.get("authoritative", [])
+    if not isinstance(authoritative, list):
+        return []
+
+    stale: List[Dict[str, Any]] = []
+    for artifact in authoritative:
+        if not isinstance(artifact, dict):
+            continue
+        accepted_by = artifact.get("accepted_by")
+        accepted_at = artifact.get("accepted_at")
+        accepted = (
+            isinstance(accepted_by, str)
+            and accepted_by.strip() != ""
+            and isinstance(accepted_at, str)
+            and accepted_at.strip() != ""
+        )
+        if not accepted:
+            stale.append(artifact)
+    return stale
+
+
+def _get_last_accepted_authoritative_artifact(state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    authoritative = state.get("artifacts", {}).get("authoritative", [])
+    if not isinstance(authoritative, list) or not authoritative:
+        return None
+
+    with_accepted_at = [a for a in authoritative if isinstance(a, dict) and a.get("accepted_at")]
+    if with_accepted_at:
+        return sorted(with_accepted_at, key=lambda a: str(a.get("accepted_at", "")))[-1]
+
+    candidates = [a for a in authoritative if isinstance(a, dict)]
+    return candidates[-1] if candidates else None
+
+
+def _suggest_next_step(gate_step_id: str) -> Optional[Dict[str, Any]]:
+    gate_step_id = _normalize_gate_step_id(gate_step_id)
+    if gate_step_id == "stage-1-requirements-approval":
+        return {
+            "id": "stage-2-ticket-drafting",
+            "agent": "Ticket Writer",
+            "type": "agent",
+            "inputs_required": ["artifacts/workflow_state.json", "artifacts/requirements/requirements.md"],
+            "outputs_expected": ["artifacts/tickets/tickets.yaml"],
+            "prompt": (
+                "Act as Ticket Writer.\n\n"
+                "Read `artifacts/workflow_state.json` and any referenced files (especially `artifacts/requirements/requirements.md`).\n"
+                "Draft implementable tickets and write `artifacts/tickets/tickets.yaml`.\n\n"
+                "If you need a human decision, add an `inputs.open_questions[]` decision request with default + instructions + answer stub, set `run.status` to `blocked`, and set `progress.next_steps[0]` to a human step.\n\n"
+                "At the end, update `artifacts/workflow_state.json` (artifacts/provenance/quality) and include the next human gate prompt."
+            ),
+        }
+
+    if gate_step_id == "stage-2-ticket-approval":
+        # Stage 3 is optional; default to Stage 4 test plan.
+        return {
+            "id": "stage-4-test-plan",
+            "agent": "Worker",
+            "type": "agent",
+            "inputs_required": [
+                "artifacts/workflow_state.json",
+                "artifacts/requirements/requirements.md",
+                "artifacts/tickets/tickets.yaml",
+            ],
+            "outputs_expected": ["artifacts/work/TICKET-ID/notes.md"],
+            "prompt": (
+                "Act as Worker.\n\n"
+                "Read `artifacts/workflow_state.json`, `artifacts/requirements/requirements.md`, and `artifacts/tickets/tickets.yaml`.\n"
+                "Apply the selection rule: choose the first eligible ticket top-to-bottom (`status=Ready`, unblocked, unclaimed). Claim it by setting `status=In Progress` plus `claimed_by`/`claimed_at`.\n\n"
+                "Then write a Stage 4 unit-only test plan to `artifacts/work/TICKET-ID/notes.md` (boundary, black-box-by-default posture, meaningful negative cases).\n"
+                "Start with the required Worker ticket assignment header (Ticket ID, Branch ID, Scope, Dependencies).\n\n"
+                "At the end, update `artifacts/workflow_state.json` and include the next prompt for Test Steward review."
+            ),
+        }
+
+    return None
+
+
+def _update_current_for_next_step(state: Dict[str, Any], next_step: Dict[str, Any]) -> None:
+    step_id = next_step.get("id", "")
+    if step_id == "stage-2-ticket-drafting":
+        state["current"] = {
+            "phase": "stage-2",
+            "stage": "ticket-drafting",
+            "step": "draft tickets",
+            "objective": "Produce artifacts/tickets/tickets.yaml from approved requirements",
+        }
+    elif step_id == "stage-4-test-plan":
+        state["current"] = {
+            "phase": "stage-4",
+            "stage": "test-plan",
+            "step": "select ticket and draft test plan",
+            "objective": "Select the next Ready ticket and write artifacts/work/TICKET-ID/notes.md with a unit-only test plan",
+        }
+
+
+def _run_post_checks(workflow_root: str, state_path: str) -> None:
+    validate = os.path.join(workflow_root, "tools", "workflow_state", "validate")
+    render = os.path.join(workflow_root, "tools", "workflow_state", "render")
+    subprocess.check_call([validate, state_path])
+    subprocess.check_call([render, "md", state_path])
+
+
+def main(argv: List[str]) -> int:
+    default_state_path = "artifacts/workflow_state.json"
+    state_path = _prompt("Workflow state path", default=default_state_path)
+    if not os.path.exists(state_path):
+        print(f"Missing workflow state file: {state_path}", file=sys.stderr)
+        return 2
+
+    state = _load_json(state_path)
+    migration_notes: List[str] = []
+    artifacts = state.setdefault("artifacts", {})
+    authoritative = artifacts.setdefault("authoritative", [])
+    provisional = artifacts.setdefault("provisional", [])
+
+    if not isinstance(authoritative, list) or not isinstance(provisional, list):
+        print("Invalid workflow state: artifacts.authoritative/provisional must be arrays", file=sys.stderr)
+        return 2
+
+    accepted_by_default = _get_git_identity()
+    normalized, notes = _normalize_open_questions(state, accepted_by_default)
+    if normalized:
+        migration_notes.extend(notes)
+    resolved, notes = _resolve_approval_questions_for_accepted_artifacts(state, fallback_answered_by=accepted_by_default)
+    if resolved:
+        migration_notes.extend(notes)
+
+    gate_default_artifact_ids = _default_gate_artifact_ids(state)
+    approval_source = "provisional"
+    chosen = _select_artifacts(
+        provisional,
+        gate_default_artifact_ids,
+        heading="Provisional artifacts:",
+    )
+    if not chosen and not provisional:
+        stale_authoritative = _get_stale_authoritative_artifacts(state)
+        if stale_authoritative and _prompt_yes_no(
+            "No provisional artifacts found, but some authoritative artifacts are missing accepted_by/accepted_at. Approve them in place",
+            default=True,
+        ):
+            approval_source = "authoritative"
+            chosen = _select_artifacts(
+                stale_authoritative,
+                gate_default_artifact_ids,
+                heading="Stale authoritative artifacts (missing accepted_by/accepted_at):",
+            )
+    if not chosen:
+        progress = state.setdefault("progress", {})
+        next_steps = progress.setdefault("next_steps", [])
+        if provisional:
+            print("No artifacts selected; no changes made.")
+            return 0
+
+        # Advance-only helper: if the approval already happened but the run forgot to
+        # populate progress.next_steps, allow the sponsor to set the next step.
+        if isinstance(next_steps, list) and not next_steps:
+            last_accepted = _get_last_accepted_authoritative_artifact(state)
+            inferred_gate_step_id = _infer_gate_step_id_from_approved_artifacts([last_accepted] if last_accepted else [])
+            suggestion = _suggest_next_step(inferred_gate_step_id)
+            if suggestion and _prompt_yes_no(
+                f"No provisional artifacts found and progress.next_steps is empty. Set next step to '{suggestion['id']}' ({suggestion['agent']})",
+                default=True,
+            ):
+                next_steps.append(suggestion)
+                _update_current_for_next_step(state, suggestion)
+
+                run = state.setdefault("run", {})
+                run["updated_at"] = _now_utc_iso()
+                if _has_blockers(state):
+                    run["status"] = "blocked"
+                else:
+                    run["status"] = "in_progress"
+
+                actor = _get_git_identity()
+                provenance = state.setdefault("provenance", {})
+                provenance["last_actor"] = f"{actor} (human)"
+                provenance["last_action"] = f"Set next step: {suggestion['id']}"
+                provenance["notes_for_humans"] = (
+                    "No provisional artifacts were available to approve. "
+                    "Next prompt (if any) is under progress.next_steps[0].prompt."
+                )
+                if migration_notes:
+                    provenance["notes_for_humans"] += "\n\nSchema repair notes:\n- " + "\n- ".join(migration_notes)
+
+                _write_json(state_path, state)
+                workflow_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+                try:
+                    _run_post_checks(workflow_root, state_path)
+                except subprocess.CalledProcessError as exc:
+                    print(f"Post-checks failed: {exc}", file=sys.stderr)
+                    return 1
+
+                print("OK")
+                return 0
+
+        print("No provisional artifacts found; no changes made.")
+        if migration_notes and _prompt_yes_no(
+            "workflow_state.json had schema-incompatible open_questions fields. Write repaired state and re-run validation/render",
+            default=True,
+        ):
+            run = state.setdefault("run", {})
+            run["updated_at"] = _now_utc_iso()
+            if _has_blockers(state):
+                run["status"] = "blocked"
+            provenance = state.setdefault("provenance", {})
+            provenance["last_actor"] = f"{accepted_by_default} (human)"
+            provenance["last_action"] = "Repaired workflow_state.json for schema compliance"
+            provenance["notes_for_humans"] = "Schema repair notes:\n- " + "\n- ".join(migration_notes)
+            _write_json(state_path, state)
+            workflow_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            try:
+                _run_post_checks(workflow_root, state_path)
+            except subprocess.CalledProcessError as exc:
+                print(f"Post-checks failed: {exc}", file=sys.stderr)
+                return 1
+            print("OK")
+            return 0
+        return 0
+
+    accepted_by = _prompt("accepted_by", default=accepted_by_default)
+    accepted_at = _prompt("accepted_at (UTC ISO-8601)", default=_now_utc_iso())
+
+    project_root = _infer_project_root(state_path)
+    approved_ids: List[str] = []
+
+    for artifact in chosen:
+        artifact_id = artifact.get("id", "unknown")
+        artifact_path = artifact.get("path")
+        if isinstance(artifact_path, str) and artifact_path:
+            abs_artifact_path = artifact_path
+            if not os.path.isabs(abs_artifact_path):
+                abs_artifact_path = os.path.join(project_root, artifact_path)
+            if os.path.exists(abs_artifact_path):
+                if not artifact.get("hash"):
+                    artifact["hash"] = _sha256_file(abs_artifact_path)
+
+        artifact["accepted_by"] = accepted_by
+        artifact["accepted_at"] = accepted_at
+        approved_ids.append(str(artifact_id))
+
+    if approval_source == "provisional":
+        approved_id_set = set(approved_ids)
+        new_provisional = [a for a in provisional if str(a.get("id")) not in approved_id_set]
+        artifacts["provisional"] = new_provisional
+        authoritative.extend(chosen)
+
+    progress = state.setdefault("progress", {})
+    completed_steps = progress.setdefault("completed_steps", [])
+    next_steps = progress.setdefault("next_steps", [])
+
+    next_step0 = next_steps[0] if isinstance(next_steps, list) and next_steps else {}
+    gate_step_id = next_step0.get("id") if isinstance(next_step0, dict) else None
+    is_human_gate = isinstance(next_step0, dict) and next_step0.get("type") == "human"
+
+    if is_human_gate and gate_step_id:
+        if _prompt_yes_no(f"Mark gate step '{gate_step_id}' completed and advance", default=True):
+            completed_gate_id = _normalize_gate_step_id(gate_step_id)
+            if isinstance(completed_steps, list) and completed_gate_id not in completed_steps:
+                completed_steps.append(completed_gate_id)
+            if isinstance(next_steps, list) and next_steps:
+                next_steps.pop(0)
+
+    resolved, notes = _resolve_questions_for_approved_artifacts(state, chosen, answered_by=accepted_by, answered_at=accepted_at)
+    if resolved:
+        migration_notes.extend(notes)
+
+    # If no next step remains, suggest one based on the gate id.
+    if isinstance(next_steps, list) and not next_steps:
+        inferred_gate_step_id = gate_step_id or _infer_gate_step_id_from_approved_artifacts(chosen)
+        suggestion = _suggest_next_step(inferred_gate_step_id)
+        if suggestion:
+            if _prompt_yes_no(f"Set next step to '{suggestion['id']}' ({suggestion['agent']})", default=True):
+                next_steps.append(suggestion)
+                _update_current_for_next_step(state, suggestion)
+        else:
+            print("No built-in next-step suggestion available; leaving progress.next_steps empty.", file=sys.stderr)
+
+    run = state.setdefault("run", {})
+    run["updated_at"] = _now_utc_iso()
+    if _has_blockers(state):
+        run["status"] = "blocked"
+    else:
+        next_step = next_steps[0] if isinstance(next_steps, list) and next_steps else {}
+        next_type = next_step.get("type") if isinstance(next_step, dict) else None
+        if next_type == "human":
+            run["status"] = "blocked"
+        elif next_step:
+            run["status"] = "in_progress"
+    provenance = state.setdefault("provenance", {})
+    provenance["last_actor"] = f"{accepted_by} (human)"
+    if approval_source == "authoritative":
+        provenance["last_action"] = f"Accepted existing authoritative artifacts: {', '.join(approved_ids)}"
+    else:
+        provenance["last_action"] = f"Approved artifacts: {', '.join(approved_ids)}"
+    provenance["notes_for_humans"] = (
+        "Approval recorded in artifacts.authoritative with accepted_by/accepted_at. "
+        "Next prompt (if any) is under progress.next_steps[0].prompt."
+    )
+    if migration_notes:
+        provenance["notes_for_humans"] += "\n\nSchema repair notes:\n- " + "\n- ".join(migration_notes)
+
+    _write_json(state_path, state)
+
+    workflow_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    try:
+        _run_post_checks(workflow_root, state_path)
+    except subprocess.CalledProcessError as exc:
+        print(f"Post-checks failed: {exc}", file=sys.stderr)
+        return 1
+
+    print("OK")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

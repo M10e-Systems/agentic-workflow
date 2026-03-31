@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Workflow State",
+  "type": "object",
+  "required": [
+    "workflow",
+    "run",
+    "current",
+    "progress",
+    "artifacts",
+    "inputs",
+    "quality",
+    "provenance"
+  ],
+  "properties": {
+    "workspace": {
+      "type": "object",
+      "properties": {
+        "project_root": {"type": "string"},
+        "workflow_root": {"type": "string"},
+        "artifact_root": {"type": "string"},
+        "code_roots": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "repo_state": {
+      "type": "object",
+      "properties": {
+        "expected": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code_root", "path"],
+            "properties": {
+              "code_root": {"type": "string"},
+              "path": {"type": "string"},
+              "branch": {"type": "string"},
+              "commit": {"type": "string"},
+              "dirty_allowed_paths": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "notes": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        },
+        "observed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code_root", "path"],
+            "properties": {
+              "code_root": {"type": "string"},
+              "path": {"type": "string"},
+              "branch": {"type": "string"},
+              "commit": {"type": "string"},
+              "dirty_paths": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "notes": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "workflow": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "run": {
+      "type": "object",
+      "required": ["run_id", "status", "created_at", "updated_at"],
+      "properties": {
+        "run_id": {"type": "string"},
+        "status": {
+          "type": "string",
+          "enum": ["not_started", "in_progress", "blocked", "completed", "failed", "canceled"]
+        },
+        "created_at": {"type": "string"},
+        "updated_at": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "current": {
+      "type": "object",
+      "required": ["phase", "stage", "step", "objective"],
+      "properties": {
+        "phase": {"type": "string"},
+        "stage": {"type": "string"},
+        "step": {"type": "string"},
+        "objective": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "progress": {
+      "type": "object",
+      "required": ["completed_steps", "next_steps"],
+      "properties": {
+        "completed_steps": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "next_steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "agent", "inputs_required", "outputs_expected"],
+            "properties": {
+              "id": {"type": "string"},
+              "agent": {"type": "string"},
+              "type": {
+                "type": "string",
+                "enum": ["agent", "human"]
+              },
+              "status": {
+                "type": "string",
+                "enum": ["ready", "pending"]
+              },
+              "prompt": {"type": "string"},
+              "inputs_required": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "outputs_expected": {
+                "type": "array",
+                "items": {"type": "string"}
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["authoritative", "provisional"],
+      "properties": {
+        "authoritative": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "path",
+              "status",
+              "hash",
+              "produced_by",
+              "accepted_by",
+              "accepted_at"
+            ],
+            "properties": {
+              "id": {"type": "string"},
+              "type": {"type": "string"},
+              "path": {"type": "string"},
+              "status": {"type": "string"},
+              "hash": {"type": "string"},
+              "produced_by": {"type": "string"},
+              "accepted_by": {"type": "string"},
+              "accepted_at": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        },
+        "provisional": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "type", "path", "status", "produced_by"],
+            "properties": {
+              "id": {"type": "string"},
+              "type": {"type": "string"},
+              "path": {"type": "string"},
+              "status": {"type": "string"},
+              "produced_by": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "inputs": {
+      "type": "object",
+      "required": ["locked", "open_questions"],
+      "properties": {
+        "locked": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "value", "source"],
+            "properties": {
+              "name": {"type": "string"},
+              "value": {},
+              "source": {
+                "type": "string",
+                "enum": ["human", "repo", "tool"]
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "open_questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "question", "owner", "blocking"],
+            "properties": {
+              "id": {"type": "string"},
+              "status": {
+                "type": "string",
+                "enum": ["open", "resolved"]
+              },
+              "question": {"type": "string"},
+              "owner": {"type": "string"},
+              "blocking": {"type": "boolean"},
+              "ticket_id": {"type": "string"},
+              "default": {
+                "type": "object",
+                "properties": {
+                  "value": {},
+                  "rationale": {"type": "string"}
+                },
+                "additionalProperties": true
+              },
+              "instructions": {"type": "string"},
+              "answer": {
+                "type": "object",
+                "properties": {
+                  "status": {"type": "string"},
+                  "value": {},
+                  "answered_by": {"type": "string"},
+                  "answered_at": {"type": "string"},
+                  "notes": {"type": "string"}
+                },
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "quality": {
+      "type": "object",
+      "required": ["checks", "risks"],
+      "properties": {
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "status", "notes"],
+            "properties": {
+              "id": {"type": "string"},
+              "status": {
+                "type": "string",
+                "enum": ["pass", "fail", "warn", "na"]
+              },
+              "notes": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        },
+        "risks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "risk", "mitigation"],
+            "properties": {
+              "id": {"type": "string"},
+              "risk": {"type": "string"},
+              "mitigation": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["last_actor", "last_action", "notes_for_humans"],
+      "properties": {
+        "last_actor": {"type": "string"},
+        "last_action": {"type": "string"},
+        "notes_for_humans": {"type": "string"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
