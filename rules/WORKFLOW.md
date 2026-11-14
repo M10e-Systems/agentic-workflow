@@ -228,7 +228,7 @@ When you approve an artifact:
 - Ensure `<PROJECT_ROOT>/artifacts` exists (create if missing) and record the location in `artifacts/requirements/requirements.md` under the `Artifact Root (ARTIFACT_ROOT)` section (this is the required communication to the workflow user).
 - **Artifacts produced:** `artifacts/requirements/requirements.md` (use `templates/requirements.template.md` or `templates/change-brief.template.md` for legacy changes).
 - **Human gate:** **Required** — approve `artifacts/requirements/requirements.md` before tickets are generated.
-- **GitLab/Jira interaction:** read-only for context.
+- **External interaction:** read-only for context, except Spec Writer may mark the identified intake ticket as in work under `POLICY.md` section 4.1. The human instruction to start work on that ticket supplies approval for this bounded action. Discover the ticket system's actual transition/claim mechanism, record the proposal in `artifacts/requirements/intake-claim.md` before writing, then verify and record the result in the artifact and canonical state. Read-only intake remains read-only; ambiguous mappings or ownership conflicts block affected work. This external intake claim is separate from the Worker's later selection/claim of local implementation tickets.
 
 ### Stage 2 — Ticket Drafting (Local First)
 

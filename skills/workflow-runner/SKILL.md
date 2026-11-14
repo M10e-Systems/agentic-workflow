@@ -4,8 +4,8 @@ description: >-
   Run or resume the accelerated agentic engineering workflow in this
   repository using canonical artifact state, explicit agent roles, and human
   gates. Use for requirements intake, ticket drafting, implementation, test
-  review, integration preparation, unit validation, or optional read-only Jira
-  intake.
+  review, integration preparation, unit validation, or optional external-ticket
+  intake and bounded in-work claims.
 ---
 
 # Workflow Runner
@@ -37,7 +37,8 @@ must not override them. Use existing repository templates and tooling.
 1. Read `artifacts/workflow_state.json` at step start. For a new run, the
    activated Spec Writer initializes state using the schema and specification.
    Create the artifact directory if missing; never overwrite an existing run.
-1. If kickoff names a Jira issue as input, perform read-only Jira intake below.
+1. If kickoff names a Jira issue as input, collect Jira context below. For any
+   external intake ticket, apply the Stage 1 intake claim rule when authorized.
 1. Determine the stage, approvals, blockers, and allowed actions from state and
    the runbook. Perform only the authorized step.
 1. Write the active role's required artifacts under `artifacts/`.
@@ -76,7 +77,29 @@ must not override them. Use existing repository templates and tooling.
   Otherwise treat user clarifications as additive constraints.
 - If access fails or context is incomplete, record the blocker and ask for supplied
   ticket context or access. Do not guess ticket content or advance affected work.
-- Never perform Jira writes during quick start; it is read-only intake.
+- Context collection is read-only. When the human also instructs Spec Writer to
+  start work on the issue, the bounded intake claim below is permitted.
+
+## External Intake Claim (Any Ticket System)
+
+- Follow `RULES_ROOT/POLICY.md` section 4.1 during Stage 1. A human instruction
+  to start Spec Writer work on an identified ticket authorizes marking that
+  ticket as in work; merely mentioning it or requesting read-only intake does not.
+- Use configured tooling to read the ticket state, ownership, and supported
+  operations. Discover the actual in-work transition or claim mechanism from
+  system metadata or explicit project configuration; never hardcode Jira status
+  names/IDs or assume another system uses statuses.
+- Before writing, record the proposed action and authorization source in
+  `artifacts/requirements/intake-claim.md` and reference it as provisional in
+  canonical state. Apply only the necessary transition/claim operation, then
+  verify and record the observed outcome. An appropriate existing state is a
+  no-op when there is no ownership conflict.
+- Set ownership only if required by the mechanism and the intended owner is
+  supplied or configured. Do not take over another owner's claim or reopen
+  completed tickets. Block affected work on ambiguous mappings, permissions,
+  ownership conflicts, or uncertain results; re-read before any retry.
+- This does not grant ticket creation, comments, bulk actions, completion,
+  acceptance, or requirements approval. Local Worker ticket selection is separate.
 
 ## Role Operating Rules
 
@@ -88,7 +111,8 @@ must not override them. Use existing repository templates and tooling.
 - Record the fixed `artifacts/` location in the requirements artifact.
 - When quick-starting from Jira, cite
   `artifacts/requirements/jira-intake-<ISSUE-KEY>.md` as an input source.
-- Do not approve requirements or mutate external services.
+- Do not approve requirements or mutate external services beyond the authorized
+  Stage 1 intake claim.
 
 ### Ticket Writer
 
@@ -154,6 +178,8 @@ If no eligible ticket exists, report that and stop.
   hosts.
 - Prepare proposed actions in local artifacts before any external write.
 - Apply writes only when workflow stage authority and human gate approval exist.
+  For the bounded Stage 1 intake claim, an instruction to start Spec Writer work
+  on the identified ticket supplies both under POLICY.md section 4.1.
 - Permit Jira reads for quick-start intake through configured tooling; record
   the
   retrieved source context locally for auditability.

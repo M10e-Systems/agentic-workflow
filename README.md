@@ -91,8 +91,9 @@ git diff --exit-code artifacts/workflow_state.md
 
 The portable [workflow-runner skill](skills/workflow-runner/SKILL.md) runs the
 accelerated agentic engineering workflow using this repository's roles, artifacts,
-and human gates. It includes optional read-only Jira intake through a configured
-connector or CLI. Jira access is unnecessary for requirements supplied directly.
+and human gates. It includes optional Jira context intake through a configured
+connector or CLI, plus a bounded Stage 1 claim in any configured ticket system.
+Jira access is unnecessary for requirements supplied directly.
 
 To install, copy `skills/workflow-runner/` into your Codex skills directory
 (`$CODEX_HOME/skills`, or `~/.codex/skills` when unset). Review any existing
@@ -111,7 +112,13 @@ Example request after providing those roots:
 
 For Jira intake, name an issue you can access and explicitly request starting
 from it. The skill reads its summary, description, and all comments before
-drafting requirements. Later roles also require explicit activation.
+drafting requirements. When instructed to start Spec Writer work on an identified
+external ticket, Spec Writer may also mark that ticket as in work using the ticket
+system's actual transition or claim mechanism. The instruction authorizes that
+bounded write without another confirmation; read-only requests remain read-only.
+The proposal is recorded locally before writing and the result is verified and
+recorded afterward (see `rules/POLICY.md` section 4.1). This applies to any
+configured ticket system. Later roles also require explicit activation.
 
 The [skill contract](docs/workflow_runner_skill.md) defines portability and
 acceptance criteria. Run `make test` to check the existing workflow-state tools;
