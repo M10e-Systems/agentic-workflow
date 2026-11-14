@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workflow Runner"
+  short_description: "Run artifact-driven engineering with human gates"
+  default_prompt: "Use $workflow-runner to act as Spec Writer and draft requirements for the configured project using the repository rules and canonical workflow state."

@@ -87,6 +87,38 @@ git diff --exit-code artifacts/workflow_state.md
 
 ---
 
+## Codex Workflow Runner Skill
+
+The portable [workflow-runner skill](skills/workflow-runner/SKILL.md) runs the
+accelerated agentic engineering workflow using this repository's roles, artifacts,
+and human gates. It includes optional read-only Jira intake through a configured
+connector or CLI. Jira access is unnecessary for requirements supplied directly.
+
+To install, copy `skills/workflow-runner/` into your Codex skills directory
+(`$CODEX_HOME/skills`, or `~/.codex/skills` when unset). Review any existing
+installation before replacing it. Keep this repository available: the skill uses
+its rules, templates, schema, and state tools.
+
+Provide `PROJECT_ROOT`, `WORKFLOW_ROOT`, and the applicable `CODE_ROOT` directories
+with your request. Workflow and code repositories must be direct children of
+`PROJECT_ROOT`; artifacts live at `PROJECT_ROOT/artifacts`. You may specify
+`RULES_ROOT` explicitly; otherwise use the runbook's resolution order.
+
+Example request after providing those roots:
+
+> Use $workflow-runner. Act as Spec Writer and draft requirements for the change
+> described below. Stop at the requirements approval gate.
+
+For Jira intake, name an issue you can access and explicitly request starting
+from it. The skill reads its summary, description, and all comments before
+drafting requirements. Later roles also require explicit activation.
+
+The [skill contract](docs/workflow_runner_skill.md) defines portability and
+acceptance criteria. Run `make test` to check the existing workflow-state tools;
+the suite uses Python's standard library and requires no dependency downloads.
+
+---
+
 ## Tooling Strategy: Agnostic Core, Real Integrations
 
 The workflow is **tooling-agnostic by design**, but the MVP demo should be run against real systems to maximize impact.
