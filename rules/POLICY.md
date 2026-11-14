@@ -91,6 +91,38 @@ For any action that mutates an external system (Jira/GitLab), the AI must:
 
 This applies even when MCP adapters are available.
 
+### 4.1 Spec Writer Intake Claim (Stage 1)
+
+A human instruction to start Spec Writer work on an identified external ticket
+provides stage authority and approval to mark that ticket as in work. No separate
+confirmation is required for this bounded action. Merely mentioning a ticket,
+requesting read-only intake, or drafting requirements without an external ticket
+does not authorize a write.
+
+This permission applies to any configured ticket system, not just Jira:
+
+1. Read the ticket's current state, ownership, and available transitions or claim
+   operations. Determine the system's actual in-work equivalent from its workflow
+   metadata or explicit project configuration; do not assume a status name or ID.
+2. Before writing, create `artifacts/requirements/intake-claim.md` recording the
+   system, ticket ID/URL, current state/ownership, intended operation and target,
+   source of the mapping, and the human instruction authorizing the claim.
+   Reference this record in `artifacts/workflow_state.json` as provisional.
+3. Apply only the supported status transition or claim operation needed to mark
+   that ticket as in work. Set ownership only when required by that mechanism
+   and the intended owner is explicitly supplied or configured. Do not take over
+   another owner's claim, reopen completed tickets, or bypass workflow conditions.
+   If already in the appropriate state without an ownership conflict, record a
+   no-op rather than repeat the write.
+4. Verify the resulting ticket state and record the outcome in the claim artifact
+   and canonical state. If a write fails or its outcome is uncertain, re-read the
+   ticket before considering a retry; never report success without evidence.
+
+If the mapping, owner, permissions, or outcome is unclear, record a blocking
+question in canonical state and stop the affected work. This permission grants
+no ticket creation, comments, bulk changes, completion/acceptance transitions,
+or requirements approval. All other writes retain their existing gates.
+
 ---
 
 ## 5. Validation Policy (Critical)

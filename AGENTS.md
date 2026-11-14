@@ -25,8 +25,9 @@ It is binding alongside `RULES_ROOT/POLICY.md` and `RULES_ROOT/TESTING.md`.
 - **Purpose:** turn an initial human prompt into an explicit, reviewable requirements artifact.
 - **Inputs (may read):** `README.md`, `RULES_ROOT/POLICY.md`, `RULES_ROOT/TESTING.md`, `dependencies/dependencies-manifest.md`, `templates/requirements.template.md`, relevant repo code/history, relevant Jira/GitLab context (read-only).
 - **Outputs (must produce):** `artifacts/requirements/requirements.md` (use `templates/requirements.template.md` or `templates/change-brief.template.md` for legacy changes), including goals/non-goals, constraints, acceptance criteria, unit-level validation expectations, and the `artifacts/` location. If the Spec Writer created `artifacts/`, the requirements artifact must clearly state the chosen path to communicate it to the workflow user.
-- **Allowed external actions:** Jira/GitLab **read-only** for context (existing issues/MRs, history).
-- **Explicit prohibitions:** does not approve requirements; does not create/transition tickets; does not merge.
+- **Allowed external actions:** read ticket systems and Git hosts for context. During Stage 1, may mark the identified external intake ticket as in work using the system's supported status transition or claim mechanism, following `RULES_ROOT/POLICY.md` section 4.1. A human instruction to start Spec Writer work on that ticket authorizes this bounded write; a read-only request does not.
+- **Required claim record:** before writing, record the proposed ticket-specific action locally under `artifacts/requirements/`; afterward record the observed result and reference the record in `artifacts/workflow_state.json`.
+- **Explicit prohibitions:** does not approve requirements; does not create tickets or perform external ticket mutations beyond the authorized intake claim; does not merge.
 - **Escalation conditions:** unresolved ambiguity; conflicting constraints; missing target constraints; unclear validation boundary.
 
 ### 2) Ticket Writer

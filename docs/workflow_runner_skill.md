@@ -15,8 +15,13 @@ the design authority; the skill does not change roles, gates, or validation scop
   personal preferences, or organization-specific operating conventions.
 - Reuse repository templates, schema, and state tools. Use `validate` and
   `render md` for step completion; do not depend on a separate finalizer.
-- Jira quick start is optional read-only intake through an available configured
-  connector or CLI. It must not require a particular account or tool installation.
+- Jira quick start collects context through an available configured connector or
+  CLI. Stage 1 also permits a bounded in-work claim on an identified intake ticket
+  in any configured ticket system under POLICY.md section 4.1. An instruction to
+  start Spec Writer work on that ticket authorizes the claim; read-only requests
+  do not. Discover the system's mechanism, record the local proposal before
+  writing, and verify the outcome. It must not require a particular account or
+  tool installation.
 - Preserve explicit role activation and human-only acceptance. A generic kickoff
   request must not silently grant a role or approval.
 

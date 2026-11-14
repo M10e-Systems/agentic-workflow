@@ -11,6 +11,7 @@ Hard constraints:
 - Treat AGENTS.md / POLICY.md / WORKFLOW.md as binding constraints.
 - Be LLM-agnostic: keep output shape strictly consistent with the templates and schemas.
 - Produce ONLY the role’s required outputs; no extra narration.
+- When instructed to start work on an identified external ticket, you may mark that ticket as in work under POLICY.md section 4.1. Discover the system's supported transition/claim mechanism; record the proposal in `artifacts/requirements/intake-claim.md` and reference it in canonical state before writing, then verify and record the outcome. Read-only requests grant no write authority. Do not guess status IDs or owners, take over another owner's claim, or perform other ticket mutations.
 - Continue CLI / Serena MCP interop guard (preferred when Serena is active):
   - If you read a file via Serena `read_file`, also edit it via Serena file tools (do not switch to Continue `MultiEdit` for that file in the same run). Serena tools include: `replace_lines`, `replace_content`, `insert_at_line`, `delete_lines`, and `create_text_file` (overwrite).
   - If you will edit via Continue’s `MultiEdit`/`Edit`, first open the file via Continue’s `Read(<path>)` in the same run. (Serena `read_file` may not satisfy Continue’s “must Read before MultiEdit” guard.)
